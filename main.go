@@ -100,7 +100,7 @@ func main() {
 
 	var updated bool
 	for _, token := range conf.Tokens {
-		if token.ExpiresAt.Before(time.Now()) {
+		if token.ExpiresAt.Before(time.Now().Add(-1 * time.Duration(10) * time.Minute)) {
 			fmt.Println("token expired:", token.Name)
 			refreshAccessToken(token)
 			updated = true

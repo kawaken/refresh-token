@@ -1,0 +1,11 @@
+[[Tokens]]
+  Name = "Sample"
+  ClientID = ""
+  ClientSecret = ""
+  AuthURL = "https://"
+  AccessToken = ""
+  ExpiresIn = 0
+  RefreshToken = ""
+  ExpiresAt = 2015-08-30T15:27:53Z
+  Error = ""
+  ErrorDescription = ""

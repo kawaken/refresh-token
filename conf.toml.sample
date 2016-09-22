@@ -1,11 +1,10 @@
-[[Tokens]]
+[[Sites]]
   Name = "Sample"
   ClientID = ""
   ClientSecret = ""
-  AuthURL = "https://"
-  AccessToken = ""
-  ExpiresIn = 0
   RefreshToken = ""
-  ExpiresAt = 2015-08-30T15:27:53Z
-  Error = ""
-  ErrorDescription = ""
+  AccessToken = ""
+  ExpiresAt = 2016-01-01T01:23:45Z
+  AuthURL = "https://"
+  Scopes = ["https://"]
+  TokenURL = ""

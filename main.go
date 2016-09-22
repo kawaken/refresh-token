@@ -17,7 +17,7 @@ var checkDuration = time.Duration(10) * time.Minute
 
 // Config は更新対象の設定。複数の設定を保持している。
 type Config struct {
-	Authentications []*Authentication
+	Sites []*Site
 }
 
 // AuthResponse は認証のレスポンス解釈用の構造体です
@@ -30,8 +30,8 @@ type AuthResponse struct {
 	ErrorDescription string `json:"error_description"`
 }
 
-// Authentication は認証の内容を保持する構造体です
-type Authentication struct {
+// Site は認証の内容を保持する構造体です
+type Site struct {
 	Name string
 
 	ClientID     string
@@ -39,7 +39,7 @@ type Authentication struct {
 
 	RefreshToken string
 	AccessToken  string
-	ExpiresIn    int
+	ExpiresIn    int `toml:"-"`
 	ExpiresAt    time.Time
 
 	// Authorization用
@@ -68,15 +68,36 @@ func writeConf(conf *Config) error {
 	return ioutil.WriteFile("conf.toml", buffer.Bytes(), os.ModePerm)
 }
 
-func refreshAccessToken(auth *Authentication) error {
+func getAuthorizationCode(site *Site) (string, error) {
 
 	values := url.Values{}
-	values.Add("client_id", auth.ClientID)
-	values.Add("client_secret", auth.ClientSecret)
-	values.Add("refresh_token", auth.RefreshToken)
-	values.Add("grant_type", "refresh_token")
+	values.Add("response_type", "code")
+	values.Add("client_id", site.ClientID)
+	//values.Add("client_secret", site.ClientSecret)
+	values.Add("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
+	values.Add("scope", strings.Join(site.Scopes, " "))
 
-	resp, err := http.PostForm(auth.TokenURL, values)
+	authorizeURL := fmt.Sprintf("%s?%s", site.AuthURL, values.Encode())
+
+	fmt.Printf("Open url: \n%s\n\n", authorizeURL)
+	fmt.Printf("Enter authorization code: ")
+
+	var authCode string
+	_, err := fmt.Scanln(&authCode)
+	if err != nil {
+		return "", err
+	}
+
+	if authCode == "" {
+		return "", fmt.Errorf("cant read Authorization Code")
+	}
+
+	return authCode, nil
+}
+
+func requestAccessToken(site *Site, values url.Values) error {
+
+	resp, err := http.PostForm(site.TokenURL, values)
 
 	if err != nil {
 		return err
@@ -102,82 +123,99 @@ func refreshAccessToken(auth *Authentication) error {
 		return fmt.Errorf("response token error: empty access token")
 	}
 
-	auth.AccessToken = ar.AccessToken
+	site.AccessToken = ar.AccessToken
 	if ar.RefreshToken != "" {
-		auth.RefreshToken = ar.RefreshToken
+		site.RefreshToken = ar.RefreshToken
 	}
-	auth.ExpiresAt = time.Now().Add(time.Duration(ar.ExpiresIn) * time.Second)
+	site.ExpiresAt = time.Now().Add(time.Duration(ar.ExpiresIn) * time.Second)
 
 	return nil
 }
 
-func getAccessToken(req *Authentication) error {
+func getAccessToken(site *Site) error {
 
-	values := url.Values{}
-	values.Add("response_code", "code")
-	values.Add("client_id", req.ClientID)
-	values.Add("client_secret", req.ClientSecret)
-	values.Add("redirect_url", "urn:ietf:wg:oauth:2.0:oob")
-	values.Add("scope", strings.Join(req.Scopes, " "))
-
-	authorizeURL := fmt.Sprintf("%s?%s", req.AuthURL, values.Encode())
-
-	fmt.Printf("Open url: %s\n", authorizeURL)
-	fmt.Printf("Enter authorization code: ")
-
-	var authCode string
-	_, err := fmt.Scanln(&authCode)
+	authCode, err := getAuthorizationCode(site)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	values := url.Values{}
+	values.Add("client_id", site.ClientID)
+	values.Add("client_secret", site.ClientSecret)
+	values.Add("code", authCode)
+	values.Add("redirect_uri", "urn:ietf:wg:oauth:2.0:oob")
+	values.Add("grant_type", "authorization_code")
 
+	return requestAccessToken(site, values)
 }
 
-func doNew() {
+func refreshAccessToken(site *Site) error {
+
+	values := url.Values{}
+	values.Add("client_id", site.ClientID)
+	values.Add("client_secret", site.ClientSecret)
+	values.Add("refresh_token", site.RefreshToken)
+	values.Add("grant_type", "refresh_token")
+
+	return requestAccessToken(site, values)
 }
 
-func doRefresh() {
+func doNew(site *Site) (bool, error) {
+	// RefreshToken が空ではない場合は何もしない
+	if site.RefreshToken != "" {
+		return false, nil
+	}
+
+	err := getAccessToken(site)
+	return err == nil, err
+}
+
+func doRefresh(site *Site) (bool, error) {
+	// 有効期限に近くなければ何もしない
+	if site.ExpiresAt.After(time.Now().Add(checkDuration)) {
+		return false, nil
+	}
+
+	if site.RefreshToken == "" {
+		return false, fmt.Errorf("no RefreshToken")
+	}
+
+	err := refreshAccessToken(site)
+	return err == nil, err
+}
+
+func main() {
+
 	conf, err := loadConf()
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
+	cmd := doRefresh
+
+	if len(os.Args) > 1 && os.Args[1] == "new" {
+		cmd = doNew
+	}
+
 	var updated bool
-	for _, auth := range conf.Authentications {
-		// チェック期限だったらチェックする
-		if auth.ExpiresAt.Before(time.Now().Add(-1 * checkDuration)) {
-			err := refreshAccessToken(auth)
-			if err != nil {
-				fmt.Println(err)
-				break
-			}
-			updated = true
-		}
-	}
-
-	if updated {
-		err = writeConf(conf)
+	for _, site := range conf.Sites {
+		success, err := cmd(site)
 		if err != nil {
-			fmt.Println(err)
+			updated = false
+			fmt.Printf("%s: %s\n", site.Name, err)
+			break
 		}
+
+		updated = updated || success
 	}
-}
 
-func main() {
-
-	if len(os.Args) == 1 {
-		doRefresh()
+	if !updated {
 		return
 	}
 
-	switch os.Args[1] {
-	case "new":
-		doNew()
-	case "refresh":
-		doRefresh()
+	err = writeConf(conf)
+	if err != nil {
+		fmt.Println(err)
 	}
-
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/BurntSushi/toml"
 	"io/ioutil"
@@ -14,6 +15,10 @@ import (
 )
 
 var checkDuration = time.Duration(10) * time.Minute
+
+var (
+	file = flag.String("file", "conf.toml", "config file path")
+)
 
 // Config は更新対象の設定。複数の設定を保持している。
 type Config struct {
@@ -50,9 +55,9 @@ type Site struct {
 	TokenURL string
 }
 
-func loadConf() (*Config, error) {
+func loadConf(path string) (*Config, error) {
 	conf := new(Config)
-	_, err := toml.DecodeFile("conf.toml", &conf)
+	_, err := toml.DecodeFile(path, &conf)
 
 	return conf, err
 }
@@ -185,8 +190,9 @@ func doRefresh(site *Site) (bool, error) {
 }
 
 func main() {
+	flag.Parse()
 
-	conf, err := loadConf()
+	conf, err := loadConf(*file)
 	if err != nil {
 		fmt.Println(err)
 		return
